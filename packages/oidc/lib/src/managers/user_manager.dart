@@ -310,6 +310,7 @@ class OidcUserManager {
   /// NOTE: this is different than [logout], since this method doesn't initiate
   /// any logout flows.
   Future<void> forgetUser() async {
+    _logger.warning('forgetting user');
     await _cleanUpStore(toDelete: {
       OidcStoreNamespace.secureTokens,
     });
@@ -651,7 +652,9 @@ class OidcUserManager {
 
     final refreshToken =
         overrideRefreshToken ?? currentUser?.token.refreshToken;
+      _logger.info(refreshToken);
     if (refreshToken == null) {
+      _logger.warning('No refresh token on the current user');
       // Can't refresh the access token anyway.
       return null;
     }
@@ -686,19 +689,29 @@ class OidcUserManager {
     OidcUser? user,
   ) async {
     if (user == null) {
+      _logger.warning('No user, unloading token events manager.');
       tokenEventsManager.unload();
     } else {
       if (!discoveryDocument.grantTypesSupportedOrDefault
           .contains(OidcConstants_GrantType.refreshToken)) {
+        _logger.warning(
+          'Server doesn\'t support refresh_token grant.',
+        );
         //Server doesn't support refresh_token grant.
         return;
       }
       if (user.token.refreshToken == null) {
         // Can't refresh the access token anyway.
+        _logger.warning(
+          'User has no refresh token, can\'t listen to token refresh.',
+        );
         return;
       }
       if (user.token.expiresIn == null) {
         // Can't know how much time is left.
+        _logger.warning(
+          'Token has no expires_in, can\'t know when to refresh.',
+        );
         return;
       }
       tokenEventsManager.load(user.token);
@@ -708,6 +721,7 @@ class OidcUserManager {
   Future<void> _handleTokenExpiring(OidcToken event) async {
     final refreshToken = event.refreshToken;
     if (refreshToken == null) {
+      _logger.info('No refresh token when handling expiring');
       return;
     }
     OidcUser? newUser;
@@ -738,12 +752,14 @@ class OidcUserManager {
       );
     } catch (e) {
       //swallow errors on fail, but unload the event manager.
+      _logger.warning(e);
       _tokenEvents.unload();
     }
     _logger.fine('Refreshed a token and got a new user: ${newUser?.uid}');
   }
 
   void _handleTokenExpired(OidcToken event) {
+    _logger.info('Token expired, unloading token events manager.');
     forgetUser();
   }
 
@@ -932,6 +948,7 @@ class OidcUserManager {
 
   /// Loads and verifies the tokens.
   Future<void> _loadCachedTokens() async {
+    _logger.info('attempting to load cached token');
     final usedKeys = <String>{
       OidcConstants_Store.currentToken,
       OidcConstants_Store.currentUserAttributes,
@@ -967,9 +984,10 @@ class OidcUserManager {
           user: loadedUser,
           metadata: metadata,
         );
-        final idTokenNeedsRefresh = validationErrors
-            .whereType<JoseException>()
-            .any((element) => element.message.startsWith('JWT expired'));
+        // final idTokenNeedsRefresh = validationErrors
+        //     .whereType<JoseException>()
+        //     .any((element) => element.message.startsWith('JWT expired'));
+        final idTokenNeedsRefresh = true;
         if (token.refreshToken != null &&
             (idTokenNeedsRefresh || token.isAccessTokenExpired())) {
           loadedUser =
@@ -989,10 +1007,13 @@ class OidcUserManager {
       }
     } catch (e) {
       // remove invalid tokens, so that they don't get used again.
-      await store.removeMany(
-        OidcStoreNamespace.secureTokens,
-        keys: usedKeys,
-      );
+      _logger.warning(e);
+      throw e;
+
+      // await store.removeMany(
+      //   OidcStoreNamespace.secureTokens,
+      //   keys: usedKeys,
+      // );
     }
   }
 
@@ -1080,6 +1101,8 @@ class OidcUserManager {
   /// Initializes the user manager, this also gets the [discoveryDocument] if it
   /// wasn't provided.
   Future<void> init() async {
+    _logger.info('UserManager has initialized.');
+    _logger.info('v3');
     if (_hasInit) {
       return;
     }
@@ -1173,7 +1196,9 @@ class OidcUserManager {
       );
       return user;
     } on OidcException catch (e) {
+      _logger.warning('Failed to re-authorize user', e);
       if (e.errorResponse != null) {
+        _logger.warning(e.errorResponse);
         await forgetUser();
         return null;
       }
